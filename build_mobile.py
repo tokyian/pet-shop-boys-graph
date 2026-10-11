@@ -1,26 +1,3 @@
-"""
-build_mobile.py — собирает mobile.html из index.html.
-
-mobile.html выглядит так же, как index.html на ПК: тот же шрифт Awke, цвета,
-кегли, видео-фон, легенда, поиск, зум, About и ТА ЖЕ раскладка графа с теми же
-изогнутыми связями. Отличия только технические:
-
-  * физика при открытии не считается: раскладку один раз «запекает»
-    bake_layout.js (та же физика, что на ПК: forceAtlas2Based, 3000 итераций,
-    гравитация -270) и кладёт в layout.json; этот скрипт вшивает её в страницу;
-  * панели физики на телефоне нет;
-  * canvas ограничен 2x пикселей, узлы не перетаскиваются, связи прячутся
-    на время жеста — чтобы не лагало;
-  * видео-фон — ровно как в index.html (тот же тег и тот же CSS-фильтр).
-
-Порядок работы:
-    node bake_layout.js        # один раз (или когда поменялись данные) -> layout.json
-    python3 build_mobile.py    # -> mobile.html
-(без layout.json скрипт использует запасную раскладку, но она отличается от ПК)
-
-Нужны: pip install networkx numpy pillow ; npm install jsdom@24 vis-network@9.1.2
-"""
-
 import json
 import re
 
@@ -32,27 +9,19 @@ OUT = "mobile.html"
 
 html = open(SRC, encoding="utf-8").read()
 
-# ------------------------------------------------------------------
-# 1. Достаём узлы и связи прямо из index.html — данные всегда актуальны
-# ------------------------------------------------------------------
+
 m_nodes = re.search(r"nodes = new vis\.DataSet\((\[.*?\n\])\);", html, re.S)
 m_edges = re.search(r"edges = new vis\.DataSet\((\[.*?\])\);\s*\n", html, re.S)
 nodes = json.loads(m_nodes.group(1))
 edges = json.loads(m_edges.group(1))
 for _i, _e in enumerate(edges):
-    _e["id"] = "e" + str(_i)          # стабильные id связей (как в bake_layout.js)
+    _e["id"] = "e" + str(_i)          
 ids = [n["id"] for n in nodes]
 idx = {i: k for k, i in enumerate(ids)}
 n = len(nodes)
 
-# ------------------------------------------------------------------
-# 2. Раскладка (один раз, вместо физики в браузере)
-#    Узлы — это подписи разного кегля, поэтому считаем их как
-#    прямоугольники и растаскиваем так, чтобы ничего не налезало.
-# ------------------------------------------------------------------
 MARGIN = 40            # зазор между подписями, px
 
-# настоящая ширина подписей: шрифт Awke берём из самого index.html
 import base64, io
 from PIL import ImageFont
 _font_b64 = re.search(r"data:font/otf;base64,([A-Za-z0-9+/=]+)", html).group(1)
@@ -84,8 +53,7 @@ if not BAKED:
     start = nx.spring_layout(G, k=0.3, iterations=300, seed=7)
     P = np.array([start[i] for i in range(n)])
 
-    # стартовый размер — из реальной площади подписей (заполнение ~15%),
-    # иначе длинные подписи не удаётся растащить без налезаний
+   
     _area = float((W * H).sum())
     _side = (_area / 0.15) ** 0.5
     P = (P - P.mean(0)) / np.abs(P).max() * (_side / 2)
@@ -96,10 +64,7 @@ if not BAKED:
 
 
     def separate(P):
-        """Растаскивает налезающие подписи ПО ОДНОЙ ПАРЕ за раз:
-        при одновременном расталкивании зажатые между соседями подписи
-        стоят на месте, а так расталкивание сходится до нуля налезаний.
-        Возвращает число пар, которые налезали друг на друга."""
+      
         dx = P[:, 0][:, None] - P[:, 0][None, :]
         dy = P[:, 1][:, None] - P[:, 1][None, :]
         ox = (W[:, None] + W[None, :]) / 2 + MARGIN - np.abs(dx)
@@ -147,27 +112,18 @@ SPRING = 350 if BAKED else int(np.median(_el))
 print(f"узлов: {n}, связей: {len(edges)}, налезаний осталось: {left}, springLength для ползунка: {SPRING}")
 print(f"размер раскладки: {int(np.ptp(P[:,0]))} x {int(np.ptp(P[:,1]))} px")
 
-# ------------------------------------------------------------------
-# 3. Собираем mobile.html из index.html
-# ------------------------------------------------------------------
 
-# 3a0. Если в index.html есть скрипт-перенаправление телефонов на mobile.html,
-#      в мобильную версию его копировать нельзя (она бы перенаправляла сама на себя)
 html = re.sub(r"<script>\s*/\* Телефоны сразу получают.*?</script>\s*", "", html, count=1, flags=re.S)
 
-# 3a. В исходнике внутри <script src=...> лежит лишний inline-код — убираем
 html = re.sub(
     r'(<script src="https://cdnjs[^>]*vis-network\.min\.js"[^>]*>)(.*?)(</script>)',
     r"\1\3", html, count=1, flags=re.S)
 
-# 3a2. В index.html нет <meta viewport> — без него телефон рисует страницу
-#      как уменьшенный десктоп (980px). Для мобильной версии он обязателен.
 html = html.replace(
     '<meta charset="utf-8">',
     '<meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1, '
     'maximum-scale=1, user-scalable=no, viewport-fit=cover">\n  <title>Pet Shop Boys: Literary References</title>', 1)
 
-# 3b. Мобильный CSS — добавляется в конец существующего <style>
 MOBILE_CSS = """
     /* ===== MOBILE (build_mobile.py): только функциональное, внешний вид — как на ПК ===== */
     html, body { overflow: hidden; overscroll-behavior: none; }
@@ -180,9 +136,7 @@ MOBILE_CSS = """
 
 html = html.replace("</style>", MOBILE_CSS + "  </style>", 1)
 
-# 3c/3d. Видео-фон остаётся ровно таким же, как в index.html (тег и CSS не трогаем)
 
-# 3e. Вся логика графа — заменяется лёгкой версией
 head, _ = html.split("<script>\nnodes = new vis.DataSet(", 1)
 
 SCRIPT = r"""<script>
@@ -314,5 +268,4 @@ SCRIPT = (SCRIPT
 open(OUT, "w", encoding="utf-8").write(head + SCRIPT)
 print(f"{OUT}: {len((head + SCRIPT).encode('utf-8')) // 1024} КБ")
 
-# для проверки раскладки глазами
 np.save("/tmp/layout.npy", np.c_[P, W, H, size])
